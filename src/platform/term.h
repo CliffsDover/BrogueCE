@@ -5,7 +5,7 @@
 #define TERM_NONE 0
 #define TERM_MOUSE 1
 
-typedef struct {float r, g, b;} fcolor;
+typedef struct {real r, g, b;} fcolor;
 struct term_t {
     int (*start)();
     void (*end)();

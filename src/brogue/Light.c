@@ -55,13 +55,13 @@ boolean paintLight(lightSource *theLight, short x, short y, boolean isMinersLigh
     short i, j, k;
     short colorComponents[3], randComponent, lightMultiplier;
     short fadeToPercent, radiusRounded;
-    fixpt radius;
+    real radius;
     char grid[DCOLS][DROWS];
     boolean dispelShadows, overlappedFieldOfView;
 
     brogueAssert(rogue.RNG == RNG_SUBSTANTIVE);
 
-    radius = randClump(theLight->lightRadius) * FP_FACTOR / 100;
+    radius = fp_trunc16(randClump(theLight->lightRadius) * 0.01);
     radiusRounded = fp_round(radius);
 
     randComponent = rand_range(0, theLight->lightColor->rand);
@@ -90,9 +90,10 @@ boolean paintLight(lightSource *theLight, short x, short y, boolean isMinersLigh
     for (i = max(0, x - radiusRounded); i < DCOLS && i < x + radiusRounded; i++) {
         for (j = max(0, y - radiusRounded); j < DROWS && j < y + radiusRounded; j++) {
             if (grid[i][j]) {
-                lightMultiplier =   100 - (100 - fadeToPercent) * fp_sqrt(((i-x) * (i-x) + (j-y) * (j-y)) * FP_FACTOR) / radius;
+                short dx = i - x, dy = j - y;
+                lightMultiplier = 100 - fp_trunc((100 - fadeToPercent) * fp_sqrt(dx*dx + dy*dy) / radius);
                 for (k=0; k<3; k++) {
-                    tmap[i][j].light[k] += colorComponents[k] * lightMultiplier / 100;;
+                    tmap[i][j].light[k] += colorComponents[k] * lightMultiplier / 100;
                 }
                 if (dispelShadows) {
                     pmap[i][j].flags &= ~IS_IN_SHADOW;
@@ -118,39 +119,38 @@ boolean paintLight(lightSource *theLight, short x, short y, boolean isMinersLigh
 
 // sets miner's light strength and characteristics based on rings of illumination, scrolls of darkness and water submersion
 void updateMinersLightRadius() {
-    fixpt base_fraction, fraction, lightRadius;
+    real base_fraction, fraction, lightRadius;
 
     lightRadius = 100 * rogue.minersLightRadius;
 
     if (rogue.lightMultiplier < 0) {
-        lightRadius = lightRadius / (-1 * rogue.lightMultiplier + 1);
+        lightRadius = lightRadius / (1. - rogue.lightMultiplier);
     } else {
         lightRadius *= rogue.lightMultiplier;
-        lightRadius = max(lightRadius, (rogue.lightMultiplier * 2 + 2) * FP_FACTOR);
+        lightRadius = max(lightRadius, rogue.lightMultiplier * 2. + 2.);
     }
 
     if (player.status[STATUS_DARKNESS]) {
-        base_fraction = FP_FACTOR - player.status[STATUS_DARKNESS] * FP_FACTOR / player.maxStatus[STATUS_DARKNESS];
-        fraction = (base_fraction * base_fraction / FP_FACTOR) * base_fraction / FP_FACTOR;
-        //fraction = (double) pow(1.0 - (((double) player.status[STATUS_DARKNESS]) / player.maxStatus[STATUS_DARKNESS]), 3);
-        if (fraction < FP_FACTOR / 20) {
-            fraction = FP_FACTOR / 20;
+        base_fraction = 1 - (real)player.status[STATUS_DARKNESS] / player.maxStatus[STATUS_DARKNESS];
+        fraction = (base_fraction * base_fraction) * base_fraction;
+        if (fraction < 0.05) {
+            fraction = 0.05;
         }
-        lightRadius = lightRadius * fraction / FP_FACTOR;
+        lightRadius = lightRadius * fraction;
     } else {
-        fraction = FP_FACTOR;
+        fraction = 1;
     }
 
-    if (lightRadius < 2 * FP_FACTOR) {
-        lightRadius = 2 * FP_FACTOR;
+    if (lightRadius < 2) {
+        lightRadius = 2;
     }
 
-    if (rogue.inWater && lightRadius > 3 * FP_FACTOR) {
-        lightRadius = max(lightRadius / 2, 3 * FP_FACTOR);
+    if (rogue.inWater && lightRadius > 3) {
+        lightRadius = max(lightRadius * 0.5, 3);
     }
 
-    rogue.minersLight.radialFadeToPercent = (35 + max(0, min(65, rogue.lightMultiplier * 5)) * fraction) / FP_FACTOR;
-    rogue.minersLight.lightRadius.upperBound = rogue.minersLight.lightRadius.lowerBound = clamp(lightRadius / FP_FACTOR, -30000, 30000);
+    rogue.minersLight.radialFadeToPercent = fp_trunc(35/65536. + max(0, min(65, rogue.lightMultiplier * 5)) * fraction); // bug here (35 shouldn't be divided) but fixing it breaks playback
+    rogue.minersLight.lightRadius.upperBound = rogue.minersLight.lightRadius.lowerBound = clamp((int)fp_trunc(lightRadius), -30000, 30000);
 }
 
 void updateDisplayDetail() {

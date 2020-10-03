@@ -69,12 +69,12 @@ static void curses_plotChar(enum displayGlyph ch,
     fcolor fore;
     fcolor back;
 
-    fore.r = (float) foreRed / 100;
-    fore.g = (float) foreGreen / 100;
-    fore.b = (float) foreBlue / 100;
-    back.r = (float) backRed / 100;
-    back.g = (float) backGreen / 100;
-    back.b = (float) backBlue / 100;
+    fore.r = (real) foreRed / 100;
+    fore.g = (real) foreGreen / 100;
+    fore.b = (real) foreBlue / 100;
+    back.r = (real) backRed / 100;
+    back.g = (real) backGreen / 100;
+    back.b = (real) backBlue / 100;
 
     ch = glyphToAscii(ch);
 

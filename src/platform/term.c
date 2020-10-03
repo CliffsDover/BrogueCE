@@ -173,12 +173,12 @@ static void term_end() {
 }
 
 typedef struct CIE {
-    float X, Y, Z;
-    float x, y, z;
+    real X, Y, Z;
+    real x, y, z;
 } CIE;
 
 typedef struct Lab {
-    float L, a, b;
+    real L, a, b;
 } Lab;
 
 #define DARK 0.0
@@ -214,7 +214,7 @@ CIE adamsPalette[16];
 static CIE white;
 
 static CIE toCIE(fcolor c) {
-    double a = 0.055;
+    real a = 0.055;
 
     // http://en.wikipedia.org/wiki/SRGB_color_space#The_reverse_transformation
 
@@ -227,7 +227,7 @@ static CIE toCIE(fcolor c) {
     cie.Y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
     cie.Z = 0.0193 * c.r + 0.1192 * c.g + 0.9505 * c.b;
 
-    float sum = cie.X + cie.Y + cie.Z;
+    real sum = cie.X + cie.Y + cie.Z;
     if (sum == 0.0) sum = 1.0;
     cie.x = cie.X / sum;
     cie.y = cie.Y / sum;
@@ -236,7 +236,7 @@ static CIE toCIE(fcolor c) {
     return cie;
 }
 
-static float Labf(float t) {
+static real Labf(real t) {
     return t > ((6.0/29.0) * (6.0/29.0) * (6.0/29.0)) ? pow(t, 1.0/3.0) : ((1.0/3.0) * (29.0 / 6.0) * (29.0 / 6.0)) * t + (4.0 / 29.0);
 }
 
@@ -252,7 +252,7 @@ static Lab toLab(CIE *c) {
     return l;
 }
 
-static float munsellSloanGodlove(float t) {
+static real munsellSloanGodlove(real t) {
     return sqrt(1.4742 * t - 0.004743 * t * t);
 }
 
@@ -267,9 +267,9 @@ static CIE adams(CIE *v) {
 
 #define SQUARE(x) ((x) * (x))
 
-static float CIE76(Lab *L1, Lab *L2) {
+static real CIE76(Lab *L1, Lab *L2) {
     // http://en.wikipedia.org/wiki/Color_difference#CIE76
-    float lbias = 1.0;
+    real lbias = 1.0;
     return sqrt(lbias * SQUARE(L2->L - L1->L) + SQUARE(L2->a - L1->a) + SQUARE(L2->b - L1->b));
 }
 
@@ -300,18 +300,18 @@ static int best (fcolor *fg, fcolor *bg) {
     // CIE adamsFg = adams(&cieFg);
     // CIE adamsBg = adams(&cieBg);
 
-    float JND = 2.3; // just-noticeable-difference
+    real JND = 2.3; // just-noticeable-difference
     int areTheSame = CIE76(&labFg, &labBg) <= 2.0 * JND; // a little extra fudge
 
-    float big = 100000000;
+    real big = 100000000;
     int fg1 = 0, fg2 = 0, bg1 = 0, bg2 = 0;
-    float fg1_score = big, fg2_score = big;
-    float bg1_score = big, bg2_score = big;
+    real fg1_score = big, fg2_score = big;
+    real bg1_score = big, bg2_score = big;
 
     int i;
 
     for (i = 0; i < 8; i++) {
-        float s = CIE76(labPalette + i, &labBg);
+        real s = CIE76(labPalette + i, &labBg);
 
         if (s < bg2_score) {
             if (s < bg1_score) {
@@ -328,7 +328,7 @@ static int best (fcolor *fg, fcolor *bg) {
     }
 
     for (i = 0; i < 16; i++) {
-        float s = CIE76(labPalette + i, &labFg);
+        real s = CIE76(labPalette + i, &labFg);
 
         if (s < fg2_score) {
             if (s < fg1_score) {
@@ -369,9 +369,9 @@ static void coerce_colorcube (fcolor *f, intcolor *c) {
     // 16-231 are a 6x6x6 RGB color cube given by ((36 * r) + (6 * g) + b + 16) with r,g,b in [0..5]
     // 232-255 are a greyscale ramp without black and white.
 
-    float sat = 0.2, bright = 0.6, contrast = 6.3;
+    real sat = 0.2, bright = 0.6, contrast = 6.3;
 
-    float rf = bright + f->r * contrast,
+    real rf = bright + f->r * contrast,
         gf = bright + f->g * contrast,
         bf = bright + f->b * contrast;
 

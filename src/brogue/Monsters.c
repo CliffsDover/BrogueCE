@@ -1064,7 +1064,7 @@ void teleport(creature *monst, short x, short y, boolean respectTerrainAvoidance
 
     if (!coordinatesAreInMap(x, y)) {
         zeroOutGrid(monstFOV);
-        getFOVMask(monstFOV, monst->xLoc, monst->yLoc, DCOLS * FP_FACTOR, T_OBSTRUCTS_VISION, 0, false);
+        getFOVMask(monstFOV, monst->xLoc, monst->yLoc, DCOLS, T_OBSTRUCTS_VISION, 0, false);
         grid = allocGrid();
         fillGrid(grid, 0);
         calculateDistances(grid, monst->xLoc, monst->yLoc, forbiddenFlagsForMonster(&(monst->info)) & T_DIVIDES_LEVEL, NULL, true, false);
@@ -2187,7 +2187,7 @@ boolean monsterBlinkToPreferenceMap(creature *monst, short **preferenceMap, bool
         return false;
     }
 
-    maxDistance = staffBlinkDistance(5 * FP_FACTOR);
+    maxDistance = staffBlinkDistance(5);
     gotOne = false;
 
     origin[0] = monst->xLoc;
@@ -3311,7 +3311,7 @@ void monstersTurn(creature *monst) {
         // and we're not poisonous, then approach or attack him.
         if ((monst->bookkeepingFlags & MB_FOLLOWER)
             && (monst->leader->bookkeepingFlags & MB_CAPTIVE)
-            && monst->leader->currentHP > (int) (monst->info.damage.upperBound * monsterDamageAdjustmentAmount(monst) / FP_FACTOR)
+            && monst->leader->currentHP > fp_trunc(monst->info.damage.upperBound * monsterDamageAdjustmentAmount(monst))
             && monst->leader->info.turnsBetweenRegen > 0
             && !(monst->info.abilityFlags & MA_POISONS)
             && !diagonalBlocked(monst->xLoc, monst->yLoc, monst->leader->xLoc, monst->leader->yLoc, false)) {
@@ -3954,7 +3954,7 @@ void toggleMonsterDormancy(creature *monst) {
 boolean staffOrWandEffectOnMonsterDescription(char *newText, item *theItem, creature *monst) {
     char theItemName[COLS], monstName[COLS];
     boolean successfulDescription = false;
-    fixpt enchant = netEnchant(theItem);
+    real enchant = netEnchant(theItem);
 
     if ((theItem->category & (STAFF | WAND))
         && tableForItemCategory(theItem->category, NULL)[theItem->kind].identified) {
@@ -4037,8 +4037,9 @@ boolean staffOrWandEffectOnMonsterDescription(char *newText, item *theItem, crea
 
 void monsterDetails(char buf[], creature *monst) {
     char monstName[COLS], capMonstName[COLS], theItemName[COLS * 3], newText[20*COLS];
-    short i, j, combatMath, combatMath2, playerKnownAverageDamage, playerKnownMaxDamage, commaCount, realArmorValue;
+    short i, j, combatMath2, playerKnownAverageDamage, playerKnownMaxDamage, commaCount, realArmorValue;
     boolean anyFlags, alreadyDisplayedDominationText = false;
+    real combatMath;
     item *theItem;
 
     buf[0] = '\0';
@@ -4105,7 +4106,7 @@ void monsterDetails(char buf[], creature *monst) {
     } else {
         realArmorValue = player.info.defense;
         player.info.defense = (armorTable[rogue.armor->kind].range.upperBound + armorTable[rogue.armor->kind].range.lowerBound) / 2;
-        player.info.defense += 10 * strengthModifier(rogue.armor) / FP_FACTOR;
+        player.info.defense += fp_trunc(10 * strengthModifier(rogue.armor));
         combatMath2 = hitProbability(monst, &player);
         player.info.defense = realArmorValue;
     }
@@ -4121,7 +4122,7 @@ void monsterDetails(char buf[], creature *monst) {
 
         itemName(rogue.armor, theItemName, false, false, NULL);
         sprintf(newText, "Your %s renders you immune to %s.\n     ", theItemName, monstName);
-    } else if (monst->info.damage.upperBound * monsterDamageAdjustmentAmount(monst) / FP_FACTOR == 0) {
+    } else if (fp_trunc(monst->info.damage.upperBound * monsterDamageAdjustmentAmount(monst)) == 0) {
         sprintf(newText, "%s deals no direct damage.\n     ", capMonstName);
     } else {
         i = strlen(buf);
@@ -4129,33 +4130,34 @@ void monsterDetails(char buf[], creature *monst) {
         if (monst->info.abilityFlags & MA_POISONS) {
             combatMath = player.status[STATUS_POISONED]; // combatMath is poison duration
             for (i = 0; combatMath * (player.poisonAmount + i) < player.currentHP; i++) {
-                combatMath += monst->info.damage.upperBound * monsterDamageAdjustmentAmount(monst) / FP_FACTOR;
+                combatMath += monst->info.damage.upperBound * monsterDamageAdjustmentAmount(monst);
             }
             if (i == 0) {
                 // Already fatally poisoned.
                 sprintf(newText, "%s has a %i%% chance to poison you and typically poisons for %i turns.\n     ",
                         capMonstName,
                         combatMath2,
-                        (int) ((monst->info.damage.lowerBound + monst->info.damage.upperBound) * monsterDamageAdjustmentAmount(monst) / 2 / FP_FACTOR));
+                        (int)fp_trunc((monst->info.damage.lowerBound + monst->info.damage.upperBound) * 0.5 * monsterDamageAdjustmentAmount(monst)));
             } else {
-            sprintf(newText, "%s has a %i%% chance to poison you, typically poisons for %i turns, and at worst, could fatally poison you in %i hit%s.\n     ",
-                    capMonstName,
-                    combatMath2,
-                    (int) ((monst->info.damage.lowerBound + monst->info.damage.upperBound) * monsterDamageAdjustmentAmount(monst) / 2 / FP_FACTOR),
-                    i,
-                    (i > 1 ? "s" : ""));
+                sprintf(newText, "%s has a %i%% chance to poison you, typically poisons for %i turns, and at worst, could fatally poison you in %i hit%s.\n     ",
+                        capMonstName,
+                        combatMath2,
+                        (int)fp_trunc((monst->info.damage.lowerBound + monst->info.damage.upperBound) * 0.5 * monsterDamageAdjustmentAmount(monst)),
+                        i,
+                        (i > 1 ? "s" : ""));
             }
         } else {
-            combatMath = ((player.currentHP + (monst->info.damage.upperBound * monsterDamageAdjustmentAmount(monst) / FP_FACTOR) - 1) * FP_FACTOR)
+            combatMath = (player.currentHP + monst->info.damage.upperBound * monsterDamageAdjustmentAmount(monst) - 1)
                     / (monst->info.damage.upperBound * monsterDamageAdjustmentAmount(monst));
+            combatMath = fp_ceil(combatMath); // e.g 2.3 turns to die really means 3 turns, since after 2 turns we'd still have some health left
             if (combatMath < 1) {
                 combatMath = 1;
             }
             sprintf(newText, "%s has a %i%% chance to hit you, typically hits for %i%% of your current health, and at worst, could defeat you in %i hit%s.\n     ",
                     capMonstName,
                     combatMath2,
-                    (int) (100 * (monst->info.damage.lowerBound + monst->info.damage.upperBound) * monsterDamageAdjustmentAmount(monst) / 2 / player.currentHP / FP_FACTOR),
-                    combatMath,
+                    (int) (100 * (monst->info.damage.lowerBound + monst->info.damage.upperBound) * monsterDamageAdjustmentAmount(monst) / 2 / player.currentHP),
+                    (int)combatMath,
                     (combatMath > 1 ? "s" : ""));
         }
     }

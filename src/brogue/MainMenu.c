@@ -440,7 +440,7 @@ int fileEntryCompareDates(const void *a, const void *b) {
     fileEntry *f1 = (fileEntry *)a;
     fileEntry *f2 = (fileEntry *)b;
     time_t t1, t2;
-    double diff;
+    real diff;
 
     t1 = mktime(&f1->date);
     t2 = mktime(&f2->date);

@@ -610,11 +610,11 @@ void startLevel(short oldLevelNumber, short stairDirection) {
     levels[oldLevelNumber - 1].awaySince = rogue.absoluteTurnNumber;
 
     //  Prepare the new level
-    rogue.minersLightRadius = (DCOLS - 1) * FP_FACTOR;
+    rogue.minersLightRadius = DCOLS - 1;
     for (i = 0; i < rogue.depthLevel; i++) {
-        rogue.minersLightRadius = rogue.minersLightRadius * 85 / 100;
+        rogue.minersLightRadius = fp_trunc16(rogue.minersLightRadius * 0.85);
     }
-    rogue.minersLightRadius += FP_FACTOR * 225 / 100;
+    rogue.minersLightRadius += 2.25;
     updateColors();
     updateRingBonuses(); // also updates miner's light
 

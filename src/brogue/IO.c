@@ -1717,7 +1717,7 @@ short adjustedLightValue(short x) {
     if (x <= LIGHT_SMOOTHING_THRESHOLD) {
         return x;
     } else {
-        return fp_sqrt(x * FP_FACTOR / LIGHT_SMOOTHING_THRESHOLD) * LIGHT_SMOOTHING_THRESHOLD / FP_FACTOR;
+        return fp_trunc(fp_sqrt((real)x / LIGHT_SMOOTHING_THRESHOLD) * LIGHT_SMOOTHING_THRESHOLD);
     }
 }
 
@@ -2090,7 +2090,8 @@ void colorFlash(const color *theColor, unsigned long reqTerrainFlags,
                 && (i-x) * (i-x) + (j-y) * (j-y) <= maxRadius * maxRadius) {
 
                 tileQualifies[i][j] = true;
-                localRadius[i][j] = fp_sqrt(((i-x) * (i-x) + (j-y) * (j-y)) * FP_FACTOR) / FP_FACTOR;
+                short dx = i - x, dy = j - y;
+                localRadius[i][j] = fp_trunc(fp_sqrt((dx*dx + dy*dy)));
                 aTileQualified = true;
             } else {
                 tileQualifies[i][j] = false;
@@ -2129,7 +2130,7 @@ void colorFlash(const color *theColor, unsigned long reqTerrainFlags,
 void funkyFade(cellDisplayBuffer displayBuf[COLS][ROWS], const color *colorStart,
                const color *colorEnd, short stepCount, short x, short y, boolean invert) {
     short i, j, n, weight;
-    double x2, y2, weightGrid[COLS][ROWS][3], percentComplete;
+    real x2, y2, weightGrid[COLS][ROWS][3], percentComplete;
     color tempColor, colorMid, foreColor, backColor;
     enum displayGlyph tempChar;
     short **distanceMap;
@@ -2143,9 +2144,9 @@ void funkyFade(cellDisplayBuffer displayBuf[COLS][ROWS], const color *colorStart
     calculateDistances(distanceMap, player.xLoc, player.yLoc, T_OBSTRUCTS_PASSABILITY, 0, true, true);
 
     for (i=0; i<COLS; i++) {
-        x2 = (double) ((i - x) * 5.0 / COLS);
+        x2 = (real) ((i - x) * 5.0 / COLS);
         for (j=0; j<ROWS; j++) {
-            y2 = (double) ((j - y) * 2.5 / ROWS);
+            y2 = (real) ((j - y) * 2.5 / ROWS);
 
             weightGrid[i][j][0] = bCurve(x2*x2+y2*y2) * (.7 + .3 * cos(5*x2*x2) * cos(5*y2*y2));
             weightGrid[i][j][1] = bCurve(x2*x2+y2*y2) * (.7 + .3 * sin(5*x2*x2) * cos(5*y2*y2));
@@ -2157,7 +2158,7 @@ void funkyFade(cellDisplayBuffer displayBuf[COLS][ROWS], const color *colorStart
         for (i=0; i<COLS; i++) {
             for (j=0; j<ROWS; j++) {
 
-                percentComplete = (double) (n) * 100 / stepCount;
+                percentComplete = (real) (n) * 100 / stepCount;
 
                 colorMid = *colorStart;
                 if (colorEnd) {
@@ -4228,7 +4229,7 @@ short estimatedArmorValue() {
     short retVal;
 
     retVal = ((armorTable[rogue.armor->kind].range.upperBound + armorTable[rogue.armor->kind].range.lowerBound) / 2) / 10;
-    retVal += strengthModifier(rogue.armor) / FP_FACTOR;
+    retVal += fp_trunc(strengthModifier(rogue.armor));
     retVal -= player.status[STATUS_DONNING];
 
     return max(0, retVal);
