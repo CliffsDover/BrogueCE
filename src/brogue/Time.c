@@ -2213,6 +2213,7 @@ void playerTurnEnded() {
 
         if (!player.status[STATUS_PARALYZED]) {
             rogue.playerTurnNumber++; // So recordings don't register more turns than you actually have.
+            LOG("---------- TURN %lu -----------------------\n", rogue.playerTurnNumber);
         }
         rogue.absoluteTurnNumber++;
 

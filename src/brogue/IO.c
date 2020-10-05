@@ -890,10 +890,11 @@ void displayLevel() {
 
 // converts colors into components
 void storeColorComponents(char components[3], const color *theColor) {
-    short rand = rand_range(0, theColor->rand);
-    components[0] = max(0, min(100, theColor->red + rand_range(0, theColor->redRand) + rand));
-    components[1] = max(0, min(100, theColor->green + rand_range(0, theColor->greenRand) + rand));
-    components[2] = max(0, min(100, theColor->blue + rand_range(0, theColor->blueRand) + rand));
+    // using Xrand here because the title menu is using substantive RNG instead of cosmetic, but we don't want to output it
+    short rand = Xrand_range(0, theColor->rand);
+    components[0] = max(0, min(100, theColor->red + Xrand_range(0, theColor->redRand) + rand));
+    components[1] = max(0, min(100, theColor->green + Xrand_range(0, theColor->greenRand) + rand));
+    components[2] = max(0, min(100, theColor->blue + Xrand_range(0, theColor->blueRand) + rand));
 }
 
 void bakeTerrainColors(color *foreColor, color *backColor, short x, short y) {

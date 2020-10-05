@@ -28,6 +28,12 @@
 #include <time.h>
 #include "PlatformDefines.h"
 
+// change these to only log turns in some range
+#define LOG_MIN_TURN 5400
+#define LOG_MAX_TURN 5490
+
+#define LOG(...) {if (rogue.playerTurnNumber >= LOG_MIN_TURN && rogue.playerTurnNumber <= LOG_MAX_TURN) fprintf(stderr, __VA_ARGS__);}
+
 // unicode: comment this line to revert to ASCII
 
 #define USE_UNICODE
@@ -2611,12 +2617,22 @@ extern "C" {
     void gameOver(char *killedBy, boolean useCustomPhrasing);
     void victory(boolean superVictory);
     void enableEasyMode();
-    long rand_range(long lowerBound, long upperBound);
+    long Xrand_range(long lowerBound, long upperBound);
+    long Yrand_range(long lowerBound, long upperBound, const char *func, const char *file, int line);
+#define rand_range(a,b) Yrand_range(a, b, __func__, __FILE__, __LINE__)
     unsigned long seedRandomGenerator(unsigned long seed);
-    short randClumpedRange(short lowerBound, short upperBound, short clumpFactor);
-    short randClump(randomRange theRange);
-    boolean rand_percent(short percent);
-    void shuffleList(short *list, short listLength);
+    short XrandClumpedRange(short lowerBound, short upperBound, short clumpFactor);
+    short YrandClumpedRange(short lowerBound, short upperBound, short clumpFactor, const char *func, const char *file, int line);
+#define randClumpedRange(a,b,c) YrandClumpedRange(a, b, c, __func__, __FILE__, __LINE__)
+    short XrandClump(randomRange theRange);
+    short YrandClump(randomRange theRange, const char *func, const char *file, int line);
+#define randClump(a) YrandClump(a, __func__, __FILE__, __LINE__)
+    boolean Xrand_percent(short percent);
+    boolean Yrand_percent(short percent, const char *func, const char *file, int line);
+#define rand_percent(a) Yrand_percent(a, __func__, __FILE__, __LINE__)
+    void XshuffleList(short *list, short listLength);
+    void YshuffleList(short *list, short listLength, const char *func, const char *file, int line);
+#define shuffleList(a,b) YshuffleList(a, b, __func__, __FILE__, __LINE__)
     void fillSequentialList(short *list, short listLength);
     fixpt fp_round(fixpt x);
     fixpt fp_pow(fixpt base, int expn);

@@ -133,7 +133,8 @@ void updateMenuFlames(const color *colors[COLS][(ROWS + MENU_FLAME_ROW_PADDING)]
 
                 // First, cause the color to drift a little.
                 for (k=0; k<4; k++) {
-                    colorSources[colorSourceNumber][k] += rand_range(-MENU_FLAME_COLOR_DRIFT_SPEED, MENU_FLAME_COLOR_DRIFT_SPEED);
+                    // using Xrand here because the title menu is using substantive RNG instead of cosmetic, but we don't want to output it
+                    colorSources[colorSourceNumber][k] += Xrand_range(-MENU_FLAME_COLOR_DRIFT_SPEED, MENU_FLAME_COLOR_DRIFT_SPEED);
                     colorSources[colorSourceNumber][k] = clamp(colorSources[colorSourceNumber][k], 0, 1000);
                 }
 
@@ -221,7 +222,8 @@ void initializeMenuFlames(boolean includeTitle,
     // Seed source color random components.
     for (i=0; i<MENU_FLAME_COLOR_SOURCE_COUNT; i++) {
         for (k=0; k<4; k++) {
-            colorSources[i][k] = rand_range(0, 1000);
+            // using Xrand here because the title menu is using substantive RNG instead of cosmetic, but we don't want to output it
+            colorSources[i][k] = Xrand_range(0, 1000);
         }
     }
 

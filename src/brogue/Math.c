@@ -31,42 +31,42 @@
 
     // Random number generation
 
-short randClump(randomRange theRange) {
-    return randClumpedRange(theRange.lowerBound, theRange.upperBound, theRange.clumpFactor);
+short XrandClump(randomRange theRange) {
+    return XrandClumpedRange(theRange.lowerBound, theRange.upperBound, theRange.clumpFactor);
 }
 
 // Get a random int between lowerBound and upperBound, inclusive, with probability distribution
 // affected by clumpFactor.
-short randClumpedRange(short lowerBound, short upperBound, short clumpFactor) {
+short XrandClumpedRange(short lowerBound, short upperBound, short clumpFactor) {
     if (upperBound <= lowerBound) {
         return lowerBound;
     }
     if (clumpFactor <= 1) {
-        return rand_range(lowerBound, upperBound);
+        return Xrand_range(lowerBound, upperBound);
     }
 
     short i, total = 0, numSides = (upperBound - lowerBound) / clumpFactor;
 
     for(i=0; i < (upperBound - lowerBound) % clumpFactor; i++) {
-        total += rand_range(0, numSides + 1);
+        total += Xrand_range(0, numSides + 1);
     }
 
     for(; i< clumpFactor; i++) {
-        total += rand_range(0, numSides);
+        total += Xrand_range(0, numSides);
     }
 
     return (total + lowerBound);
 }
 
 // Get a random int between lowerBound and upperBound, inclusive
-boolean rand_percent(short percent) {
-    return (rand_range(0, 99) < clamp(percent, 0, 100));
+boolean Xrand_percent(short percent) {
+    return (Xrand_range(0, 99) < clamp(percent, 0, 100));
 }
 
-void shuffleList(short *list, short listLength) {
+void XshuffleList(short *list, short listLength) {
     short i, r, buf;
     for (i=0; i<listLength; i++) {
-        r = rand_range(0, listLength-1);
+        r = Xrand_range(0, listLength-1);
         if (i != r) {
             buf = list[r];
             list[r] = list[i];
@@ -116,7 +116,7 @@ void raninit( ranctx *x, u4 seed ) {
 
 #define RAND_MAX_COMBO ((unsigned long) UINT32_MAX)
 
-long range(long n, short RNG) {
+long __range(long n, short RNG) {
     unsigned long div;
     long r;
 
@@ -129,10 +129,19 @@ long range(long n, short RNG) {
     return r;
 }
 
+long range(long n, short RNG) {
+    if (rogue.playerTurnNumber >= LOG_MIN_TURN && rogue.playerTurnNumber <= LOG_MAX_TURN && RNG == RNG_SUBSTANTIVE) {
+        ranctx saved = RNGState[RNG];
+        fprintf(stderr, "[%3d] ", __range(256, RNG));
+        RNGState[RNG] = saved;
+    }
+    return __range(n, RNG);
+}
+
 // Get a random int between lowerBound and upperBound, inclusive, with uniform probability distribution
 
 #ifdef AUDIT_RNG // debug version
-long rand_range(long lowerBound, long upperBound) {
+long Xrand_range(long lowerBound, long upperBound) {
     int retval;
     char RNGMessage[100];
     if (upperBound <= lowerBound) {
@@ -151,7 +160,7 @@ long rand_range(long lowerBound, long upperBound) {
     return retval;
 }
 #else // normal version
-long rand_range(long lowerBound, long upperBound) {
+long Xrand_range(long lowerBound, long upperBound) {
     if (upperBound <= lowerBound) {
         return lowerBound;
     }
@@ -163,6 +172,58 @@ long rand_range(long lowerBound, long upperBound) {
     return lowerBound + range(interval, rogue.RNG);
 }
 #endif
+
+long Yrand_range(long lowerBound, long upperBound, const char *func, const char *file, int line) {
+    if (upperBound <= lowerBound) {
+        return lowerBound;
+    }
+    long out = Xrand_range(lowerBound, upperBound);
+    if (rogue.RNG == RNG_SUBSTANTIVE) {
+        if (!strcmp(func, "lotteryDraw")) line = 0;
+        if (!strcmp(func, "shuffleFlavors")) line = 0;
+        LOG("%s at %s:%d calls rand_range(%ld,%ld) --> %ld\n", func, file, line, lowerBound, upperBound, out);
+    }
+    return out;
+}
+
+short YrandClumpedRange(short lowerBound, short upperBound, short clumpFactor, const char *func, const char *file, int line) {
+    if (upperBound <= lowerBound) {
+        return lowerBound;
+    }
+    short out = XrandClumpedRange(lowerBound, upperBound, clumpFactor);
+    if (rogue.RNG == RNG_SUBSTANTIVE) {
+        LOG("%s at %s:%d calls randClumpedRange(%d,%d,%d) --> %d\n", func, file, line, lowerBound, upperBound, clumpFactor, out);
+    }
+    return out;
+}
+
+short YrandClump(randomRange theRange, const char *func, const char *file, int line) {
+    if (theRange.upperBound <= theRange.lowerBound) {
+        return theRange.lowerBound;
+    }
+    short out = XrandClump(theRange);
+    if (rogue.RNG == RNG_SUBSTANTIVE) {
+        LOG("%s at %s:%d calls randClump({%d,%d,%d}) --> %d\n", func, file, line, theRange.lowerBound, theRange.upperBound, theRange.clumpFactor, out);
+    }
+    return out;
+}
+
+boolean Yrand_percent(short percent, const char *func, const char *file, int line) {
+    long out = Xrand_percent(percent);
+    if (rogue.RNG == RNG_SUBSTANTIVE) {
+        if (!strcmp(func, "populateItems")) line = 0;
+        if (!strcmp(func, "shuffleFlavors")) line = 0;
+        LOG("%s at %s:%d calls rand_percent(%d) --> %d\n", func, file, line, percent, out);
+    }
+    return out;
+}
+
+void YshuffleList(short *list, short listLength, const char *func, const char *file, int line) {
+    XshuffleList(list, listLength);
+    if (rogue.RNG == RNG_SUBSTANTIVE) {
+        LOG("%s at %s:%d calls shuffleList(...,%d)\n", func, file, line, listLength);
+    }
+}
 
 // seeds with the time if called with a parameter of 0; returns the seed regardless.
 // All RNGs are seeded simultaneously and identically.

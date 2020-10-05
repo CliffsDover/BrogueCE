@@ -814,6 +814,7 @@ void startLevel(short oldLevelNumber, short stairDirection) {
 
     if (rogue.playerTurnNumber) {
         rogue.playerTurnNumber++; // Increment even though no time has passed.
+        LOG("---------- TURN %lu -----------------------\n", rogue.playerTurnNumber);
     }
     RNGCheck();
     flushBufferToFile();
