@@ -29,6 +29,10 @@ ifeq ($(MAC_APP),YES)
 	cppflags += -DSDL_PATHS
 endif
 
+ifeq ($(FILENAMES),GENERIC)
+	cppflags += -DGENERIC_FILENAMES
+endif
+
 ifeq ($(DEBUG),YES)
 	cflags += -g -Og
 	cppflags += -DENABLE_PLAYBACK_SWITCH

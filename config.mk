@@ -17,3 +17,8 @@ DEBUG := NO
 
 # Configure the executable to run from a macOS .app bundle (only works in graphical mode)
 MAC_APP := NO
+
+# Savegames and recordings are either:
+#  DESCRIPTIVE - include some details like seed and depth
+#  GENERIC - "Saved game.broguesave" and "Recording.broguerec"
+FILENAMES := DESCRIPTIVE
