@@ -774,17 +774,45 @@ boolean diagonalBlocked(const short x1, const short y1, const short x2, const sh
     return false;
 }
 
+static void recordMove(boolean *alreadyRecorded, short initialDirection) {
+    const int directionKeys[8] = {UP_KEY, DOWN_KEY, LEFT_KEY, RIGHT_KEY, UPLEFT_KEY, DOWNLEFT_KEY, UPRIGHT_KEY, DOWNRIGHT_KEY};
+    short x = player.xLoc, y = player.yLoc;
+
+    if (*alreadyRecorded) {
+        return; // don't record it twice!
+    }
+
+    recordKeystroke(directionKeys[initialDirection], false, false);
+    *alreadyRecorded = true;
+
+    // Update stuck status.
+    if (player.status[STATUS_STUCK] && cellHasTerrainFlag(x, y, T_ENTANGLES)) {
+        if (--player.status[STATUS_STUCK]) {
+            // Don't interrupt exploration with this message.
+            if (!rogue.automationActive) {
+                message("you struggle but cannot free yourself.", false);
+            }
+        } else {
+            if (!rogue.automationActive) {
+                message("you break free!", false);
+            }
+            if (tileCatalog[pmap[x][y].layers[SURFACE]].flags & T_ENTANGLES) {
+                pmap[x][y].layers[SURFACE] = NOTHING;
+            }
+        }
+    }
+}
+
 // Called whenever the player voluntarily tries to move in a given direction.
 // Can be called from movement keys, exploration, or auto-travel.
 boolean playerMoves(short direction) {
     short initialDirection = direction, i, layer;
     short x = player.xLoc, y = player.yLoc;
     short newX, newY, newestX, newestY;
-    boolean playerMoved = false, alreadyRecorded = false, specialAttackAborted = false, anyAttackHit = false;
+    boolean alreadyRecorded = false, specialAttackAborted = false, anyAttackHit = false;
     creature *defender = NULL, *tempMonst = NULL, *hitList[16] = {NULL};
     char monstName[COLS];
     char buf[COLS*3];
-    const int directionKeys[8] = {UP_KEY, DOWN_KEY, LEFT_KEY, RIGHT_KEY, UPLEFT_KEY, DOWNLEFT_KEY, UPRIGHT_KEY, DOWNRIGHT_KEY};
 
     brogueAssert(direction >= 0 && direction < DIRECTION_COUNT);
 
@@ -793,6 +821,17 @@ boolean playerMoves(short direction) {
 
     if (!coordinatesAreInMap(newX, newY)) {
         return false;
+    }
+
+    // Is the player stuck for at least another turn?
+    if (player.status[STATUS_STUCK] >= 2 && cellHasTerrainFlag(x, y, T_ENTANGLES)) {
+        recordMove(&alreadyRecorded, initialDirection);
+        if (player.status[STATUS_NAUSEOUS] && rand_percent(25)) {
+            vomit(&player);
+        }
+        moveEntrancedMonsters(direction);
+        playerTurnEnded();
+        return true;
     }
 
     if (player.status[STATUS_CONFUSED]) {
@@ -821,19 +860,12 @@ boolean playerMoves(short direction) {
             }
         }
 
+        // Randomly change direction if possible
         direction = randValidDirectionFrom(&player, x, y, false);
-        if (direction == -1) {
-            return false;
-        } else {
+        if (direction != NO_DIRECTION) {
             newX = x + nbDirs[direction][0];
             newY = y + nbDirs[direction][1];
-            if (!coordinatesAreInMap(newX, newY)) {
-                return false;
-            }
-            if (!alreadyRecorded) {
-                recordKeystroke(directionKeys[initialDirection], false, false);
-                alreadyRecorded = true;
-            }
+            recordMove(&alreadyRecorded, initialDirection); // we used the RNG so we must not leave the function without recording the move!
         }
     }
 
@@ -849,37 +881,9 @@ boolean playerMoves(short direction) {
         if (cellHasTerrainFlag(newX, newY, T_OBSTRUCTS_PASSABILITY) && cellHasTMFlag(newX, newY, TM_PROMOTES_ON_PLAYER_ENTRY)) {
             layer = layerWithTMFlag(newX, newY, TM_PROMOTES_ON_PLAYER_ENTRY);
             if (tileCatalog[pmap[newX][newY].layers[layer]].flags & T_OBSTRUCTS_PASSABILITY) {
-                if (!alreadyRecorded) {
-                    recordKeystroke(directionKeys[initialDirection], false, false);
-                    alreadyRecorded = true;
-                }
+                recordMove(&alreadyRecorded, initialDirection);
                 message(tileCatalog[pmap[newX][newY].layers[layer]].flavorText, false);
                 promoteTile(newX, newY, layer, false);
-                playerTurnEnded();
-                return true;
-            }
-        }
-
-        if (player.status[STATUS_STUCK] && cellHasTerrainFlag(x, y, T_ENTANGLES)) {
-                // Don't interrupt exploration with this message.
-            if (--player.status[STATUS_STUCK]) {
-                if (!rogue.automationActive) {
-                    message("you struggle but cannot free yourself.", false);
-                }
-            } else {
-                if (!rogue.automationActive) {
-                    message("you break free!", false);
-                }
-                if (tileCatalog[pmap[x][y].layers[SURFACE]].flags & T_ENTANGLES) {
-                    pmap[x][y].layers[SURFACE] = NOTHING;
-                }
-            }
-            moveEntrancedMonsters(direction);
-            if (!alreadyRecorded) {
-                recordKeystroke(directionKeys[initialDirection], false, false);
-                alreadyRecorded = true;
-            }
-            if (player.status[STATUS_STUCK]) {
                 playerTurnEnded();
                 return true;
             }
@@ -895,10 +899,7 @@ boolean playerMoves(short direction) {
         if (handleWhipAttacks(&player, direction, &specialAttackAborted)
             || handleSpearAttacks(&player, direction, &specialAttackAborted)) {
 
-            if (!alreadyRecorded) {
-                recordKeystroke(directionKeys[initialDirection], false, false);
-                alreadyRecorded = true;
-            }
+            recordMove(&alreadyRecorded, initialDirection);
             playerRecoversFromAttacking(true);
             moveEntrancedMonsters(direction);
             playerTurnEnded();
@@ -915,21 +916,17 @@ boolean playerMoves(short direction) {
             if (defender->bookkeepingFlags & MB_CAPTIVE) {
                 monsterName(monstName, defender, false);
                 sprintf(buf, "Free the captive %s?", monstName);
-                if (alreadyRecorded || confirm(buf, false)) {
-                    if (!alreadyRecorded) {
-                        recordKeystroke(directionKeys[initialDirection], false, false);
-                        alreadyRecorded = true;
-                    }
-                    if (cellHasTMFlag(newX, newY, TM_PROMOTES_WITH_KEY) && keyInPackFor(newX, newY)) {
-                        useKeyAt(keyInPackFor(newX, newY), newX, newY);
-                    }
-                    freeCaptive(defender);
-                    player.ticksUntilTurn += player.attackSpeed;
-                    playerTurnEnded();
-                    return true;
-                } else {
+                if (!alreadyRecorded && !confirm(buf, false)) {
                     return false;
                 }
+                recordMove(&alreadyRecorded, initialDirection);
+                if (cellHasTMFlag(newX, newY, TM_PROMOTES_WITH_KEY) && keyInPackFor(newX, newY)) {
+                    useKeyAt(keyInPackFor(newX, newY), newX, newY);
+                }
+                freeCaptive(defender);
+                player.ticksUntilTurn += player.attackSpeed;
+                playerTurnEnded();
+                return true;
             }
 
             if (defender->creatureState != MONSTER_ALLY) {
@@ -946,23 +943,13 @@ boolean playerMoves(short direction) {
                     return false;
                 }
 
-                if (player.status[STATUS_NAUSEOUS]) {
-                    if (!alreadyRecorded) {
-                        recordKeystroke(directionKeys[initialDirection], false, false);
-                        alreadyRecorded = true;
-                    }
-                    if (rand_percent(25)) {
-                        vomit(&player);
-                        playerTurnEnded();
-                        return false;
-                    }
-                }
-
                 // Proceeding with the attack.
+                recordMove(&alreadyRecorded, initialDirection);
 
-                if (!alreadyRecorded) {
-                    recordKeystroke(directionKeys[initialDirection], false, false);
-                    alreadyRecorded = true;
+                if (player.status[STATUS_NAUSEOUS] && rand_percent(25)) {
+                    vomit(&player);
+                    playerTurnEnded();
+                    return false;
                 }
 
                 // Attack!
@@ -995,10 +982,7 @@ boolean playerMoves(short direction) {
 
                     monsterName(monstName, tempMonst, true);
                     if (alreadyRecorded || !canSeeMonster(tempMonst)) {
-                        if (!alreadyRecorded) {
-                            recordKeystroke(directionKeys[initialDirection], false, false);
-                            alreadyRecorded = true;
-                        }
+                        recordMove(&alreadyRecorded, initialDirection);
                         sprintf(buf, "you struggle but %s is holding your legs!", monstName);
                         moveEntrancedMonsters(direction);
                         message(buf, false);
@@ -1014,7 +998,9 @@ boolean playerMoves(short direction) {
             player.bookkeepingFlags &= ~MB_SEIZED; // failsafe
         }
 
-        if (pmap[newX][newY].flags & (DISCOVERED | MAGIC_MAPPED)
+        if (alreadyRecorded) {
+            // The player is already committed to this move, it's too late to cancel!
+        } else if (pmap[newX][newY].flags & (DISCOVERED | MAGIC_MAPPED)
             && player.status[STATUS_LEVITATING] <= 1
             && !player.status[STATUS_CONFUSED]
             && cellHasTerrainFlag(newX, newY, T_LAVA_INSTA_DEATH)
@@ -1087,10 +1073,7 @@ boolean playerMoves(short direction) {
         }
 
         if (player.status[STATUS_NAUSEOUS]) {
-            if (!alreadyRecorded) {
-                recordKeystroke(directionKeys[initialDirection], false, false);
-                alreadyRecorded = true;
-            }
+            recordMove(&alreadyRecorded, initialDirection);
             if (rand_percent(25)) {
                 vomit(&player);
                 playerTurnEnded();
@@ -1100,23 +1083,14 @@ boolean playerMoves(short direction) {
 
         // Are we taking the stairs?
         if (rogue.downLoc[0] == newX && rogue.downLoc[1] == newY) {
-            if (!alreadyRecorded) {
-                recordKeystroke(directionKeys[initialDirection], false, false);
-                alreadyRecorded = true;
-            }
+            recordMove(&alreadyRecorded, initialDirection);
             useStairs(1);
         } else if (rogue.upLoc[0] == newX && rogue.upLoc[1] == newY) {
-            if (!alreadyRecorded) {
-                recordKeystroke(directionKeys[initialDirection], false, false);
-                alreadyRecorded = true;
-            }
+            recordMove(&alreadyRecorded, initialDirection);
             useStairs(-1);
         } else {
             // Okay, we're finally moving!
-            if (!alreadyRecorded) {
-                recordKeystroke(directionKeys[initialDirection], false, false);
-                alreadyRecorded = true;
-            }
+            recordMove(&alreadyRecorded, initialDirection);
 
             player.xLoc += nbDirs[direction][0];
             player.yLoc += nbDirs[direction][1];
@@ -1142,7 +1116,6 @@ boolean playerMoves(short direction) {
             }
             refreshDungeonCell(x, y);
             refreshDungeonCell(player.xLoc, player.yLoc);
-            playerMoved = true;
 
             checkForMissingKeys(x, y);
             if (monsterShouldFall(&player)) {
@@ -1163,6 +1136,7 @@ boolean playerMoves(short direction) {
             }
 
             playerTurnEnded();
+            return true;
         }
     } else if (cellHasTerrainFlag(newX, newY, T_OBSTRUCTS_PASSABILITY)) {
         i = pmap[newX][newY].layers[layerWithFlag(newX, newY, T_OBSTRUCTS_PASSABILITY)];
@@ -1170,10 +1144,7 @@ boolean playerMoves(short direction) {
             && (!diagonalBlocked(x, y, newX, newY, false) || !cellHasTMFlag(newX, newY, TM_PROMOTES_WITH_KEY))) {
 
             if (!(pmap[newX][newY].flags & DISCOVERED)) {
-                if (!alreadyRecorded) {
-                    recordKeystroke(directionKeys[initialDirection], false, false);
-                    alreadyRecorded = true;
-                }
+                recordMove(&alreadyRecorded, initialDirection);
                 discoverCell(newX, newY);
                 refreshDungeonCell(newX, newY);
             }
@@ -1181,7 +1152,7 @@ boolean playerMoves(short direction) {
             messageWithColor(tileCatalog[i].flavorText, &backgroundMessageColor, false);
         }
     }
-    return playerMoved;
+    return false;
 }
 
 // replaced in Dijkstra.c:
