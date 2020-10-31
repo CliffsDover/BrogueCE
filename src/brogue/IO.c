@@ -1333,6 +1333,11 @@ void getCellAppearance(short x, short y, enum displayGlyph *returnChar, color *r
         cellChar = G_WALL_TOP;
     }
 
+    // Show granite rather than brick on the opposite side of walls
+    if (cellChar == G_WALL && (!coordinatesAreInMap(x, y+1) || pmap[x][y+1].layers[DUNGEON] == GRANITE)) {
+        cellChar = G_GRANITE;
+    }
+
     if (((pmap[x][y].flags & ITEM_DETECTED) || monsterWithDetectedItem
          || (monst && monsterRevealed(monst)))
         && !playerCanSeeOrSense(x, y)) {
