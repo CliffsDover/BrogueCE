@@ -8,7 +8,7 @@
 
 struct brogueConsole currentConsole;
 
-char dataDirectory[BROGUE_FILENAME_MAX] = STRINGIFY(DATADIR);
+char dataDirectory[BROGUE_FILENAME_MAX] = STRINGIFY(BROGUEDATADIR);
 boolean serverMode = false;
 boolean hasGraphics = false;
 boolean graphicsEnabled = false;

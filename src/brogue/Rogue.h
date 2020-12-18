@@ -1158,8 +1158,13 @@ enum tileFlags {
 
 #define UNKNOWN_KEY         (128+19)
 
+#ifndef min
 #define min(x, y)       (((x) < (y)) ? (x) : (y))
+#endif
+#ifndef max
 #define max(x, y)       (((x) > (y)) ? (x) : (y))
+#endif
+
 #define clamp(x, low, hi)   (min(hi, max(x, low))) // pins x to the [y, z] interval
 
 #define terrainFlags(x, y)                  (tileCatalog[pmap[x][y].layers[DUNGEON]].flags \

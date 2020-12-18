@@ -1,5 +1,14 @@
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
+#else
+#include <GL/gl.h>
+#endif
+
 #include <math.h>
+#include <SDL_image.h>
+#include "platform.h"
 #include "tiles.h"
+
 
 #define PI  3.14159265358979323846
 
@@ -34,15 +43,20 @@ typedef struct ScreenTile {
 } ScreenTile;
 
 static SDL_Surface *TilesPNG;
-static SDL_Texture *Textures[4];
+static GLuint Textures[4];
+static int TextureWidth[4];
+static int TextureHeight[4];
 static int8_t tilePadding[TILE_ROWS][TILE_COLS];
 static int8_t tileShifts[TILE_ROWS][TILE_COLS][2][MAX_TILE_SIZE][3];
 static boolean tileEmpty[TILE_ROWS][TILE_COLS];
 static ScreenTile screenTiles[ROWS][COLS];
 static int baseTileWidth = -1;
 static int baseTileHeight = -1;
+static int outputWidth = -1;
+static int outputHeight = -1;
 
 SDL_Window *Win = NULL;
+SDL_GLContext glContext = NULL;
 int windowWidth = -1;
 int windowHeight = -1;
 boolean fullScreen = false;
@@ -62,13 +76,13 @@ static void imgfatal() {
 
 static int getPadding(int row, int column) {
     int padding;
-    unsigned char *pixels = TilesPNG->pixels;
+    Uint32 *pixels = TilesPNG->pixels; // each pixel is encoded as 0xffBBGGRR
     for (padding = 0; padding < TILE_HEIGHT / 4; padding++) {
         for (int x = 0; x < TILE_WIDTH; x++) {
             int y1 = padding;
             int y2 = TILE_HEIGHT - padding - 1;
-            if (pixels[((x + column * TILE_WIDTH) + (y1 + row * TILE_HEIGHT) * PNG_WIDTH) * 4] > 0 ||
-                pixels[((x + column * TILE_WIDTH) + (y2 + row * TILE_HEIGHT) * PNG_WIDTH) * 4] > 0)
+            if (pixels[(x + column * TILE_WIDTH) + (y1 + row * TILE_HEIGHT) * PNG_WIDTH] & 0xff ||
+                pixels[(x + column * TILE_WIDTH) + (y2 + row * TILE_HEIGHT) * PNG_WIDTH] & 0xff)
             {
                 return padding;
             }
@@ -79,10 +93,10 @@ static int getPadding(int row, int column) {
 
 
 static boolean isTileEmpty(int row, int column) {
-    unsigned char *pixels = TilesPNG->pixels;
+    Uint32 *pixels = TilesPNG->pixels; // each pixel is encoded as 0xffBBGGRR
     for (int y = 0; y < TILE_HEIGHT; y++) {
         for (int x = 0; x < TILE_WIDTH; x++) {
-            if (pixels[((x + column * TILE_WIDTH) + (y + row * TILE_HEIGHT) * PNG_WIDTH) * 4] > 0) {
+            if (pixels[(x + column * TILE_WIDTH) + (y + row * TILE_HEIGHT) * PNG_WIDTH] & 0xff) {
                 return false;
             }
         }
@@ -93,11 +107,11 @@ static boolean isTileEmpty(int row, int column) {
 
 static uint64_t xorshift64s(uint64_t *state) {
     uint64_t x = *state;
-	x ^= x >> 12;
-	x ^= x << 25;
-	x ^= x >> 27;
-	*state = x;
-	return x * 0x2545f4914f6cdd1d;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    *state = x;
+    return x * 0x2545f4914f6cdd1d;
 }
 
 
@@ -106,17 +120,9 @@ static uint64_t noise(uint64_t *state) {
 }
 
 
-static double prepareTile(SDL_Surface *tiles, int row, int column, boolean optimizing) {
+static double prepareTile(SDL_Surface *surface, int tileWidth, int tileHeight, int row, int column, boolean optimizing) {
     int padding = tilePadding[row][column];         // how much blank spaces there is at the top and bottom of the source tile
     char processing = TileProcessing[row][column];  // how should this tile be processed?
-
-    // Size of the downscaled surface
-    const int surfaceWidth = tiles->w;
-    const int surfaceHeight = tiles->h;
-
-    // Size of downscaled tiles
-    const int tileWidth = surfaceWidth / TILE_COLS;
-    const int tileHeight = surfaceHeight / TILE_ROWS;
 
     // Size of the area the glyph must fit into
     int fitWidth = max(1, baseTileWidth);
@@ -227,10 +233,10 @@ static double prepareTile(SDL_Surface *tiles, int row, int column, boolean optim
         int targetY = scaledY[y];
         if (targetY < 0 || targetY >= MAX_TILE_SIZE) continue;
         uint64_t *target = values[targetY];
-        unsigned char *pixel = TilesPNG->pixels;
-        pixel += ((column * TILE_WIDTH) + (row * TILE_HEIGHT + y) * PNG_WIDTH) * 4;
+        Uint32 *pixel = TilesPNG->pixels;
+        pixel += (column * TILE_WIDTH) + (row * TILE_HEIGHT + y) * PNG_WIDTH;
         for (int x = 0; x < TILE_WIDTH; x++) {
-            uint64_t value = pixel[x*4];
+            uint64_t value = pixel[x] & 0xff;
             target[scaledX[x]] += value * value  // (gamma 2.0)
                                   | 0x100000000; // (count = 1)
         }
@@ -279,9 +285,10 @@ static double prepareTile(SDL_Surface *tiles, int row, int column, boolean optim
     }
 
     // convert accumulator to image transparency
+    Uint32 mask = SDL_MapRGBA(surface->format, 255, 255, 255, 0);
     for (int y = 0; y < tileHeight; y++) {
-        unsigned char *pixel = tiles->pixels;
-        pixel += ((column * tileWidth) + (row * tileHeight + y) * surfaceWidth) * 4;
+        Uint32 *pixel = surface->pixels;
+        pixel += (column * tileWidth) + (row * tileHeight + y) * surface->w;
         for (int x = 0; x < tileWidth; x++) {
             uint64_t value = values[y][x];
 
@@ -298,11 +305,7 @@ static double prepareTile(SDL_Surface *tiles, int row, int column, boolean optim
 
             // opacity (gamma-compressed)
             value = value == 0 ? 0 : value > 64770 ? 255 : round(sqrt(value));
-
-            *pixel++ = 255;
-            *pixel++ = 255;
-            *pixel++ = 255;
-            *pixel++ = value;
+            *pixel++ = (0x01010101 * value) | mask;
         }
     }
 
@@ -328,7 +331,7 @@ static void optimizeTiles() {
             baseTileHeight = MAX_TILE_SIZE;
             for (baseTileWidth = 5; baseTileWidth <= MAX_TILE_SIZE; baseTileWidth++) {
                 int8_t *shifts = tileShifts[row][column][0][baseTileWidth - 1];
-                SDL_Surface *tiles = SDL_CreateRGBSurfaceWithFormat(0, baseTileWidth * TILE_COLS, baseTileHeight * TILE_ROWS, 32, SDL_PIXELFORMAT_RGBA32);
+                SDL_Surface *tiles = SDL_CreateRGBSurfaceWithFormat(0, baseTileWidth * TILE_COLS, baseTileHeight * TILE_ROWS, 32, SDL_PIXELFORMAT_ABGR8888);
 
                 for (int i = 0; i < 3; i++) {
                     for (int idx = 0; idx < (processing == 't' || processing == '#' ? 2 : 3); idx++) {
@@ -340,7 +343,7 @@ static void optimizeTiles() {
                             if (processing == 't' || processing == '#') {
                                 shifts[2] = (shifts[0] + shifts[1]) / 2;
                             }
-                            double blur = prepareTile(tiles, row, column, true);
+                            double blur = prepareTile(tiles, baseTileWidth, baseTileHeight, row, column, true);
                             if (blur < bestResult) {
                                 bestResult = blur;
                                 bestShift = shift;
@@ -360,7 +363,7 @@ static void optimizeTiles() {
             baseTileWidth = MAX_TILE_SIZE;
             for (baseTileHeight = 7; baseTileHeight <= MAX_TILE_SIZE; baseTileHeight++) {
                 int8_t *shifts = tileShifts[row][column][1][baseTileHeight - 1];
-                SDL_Surface *tiles = SDL_CreateRGBSurfaceWithFormat(0, baseTileWidth * TILE_COLS, baseTileHeight * TILE_ROWS, 32, SDL_PIXELFORMAT_RGBA32);
+                SDL_Surface *tiles = SDL_CreateRGBSurfaceWithFormat(0, baseTileWidth * TILE_COLS, baseTileHeight * TILE_ROWS, 32, SDL_PIXELFORMAT_ABGR8888);
 
                 for (int i = 0; i < 3; i++) {
                     for (int idx = 0; idx < (processing == 't' ? 1 : 3); idx++) {
@@ -369,7 +372,7 @@ static void optimizeTiles() {
                         int8_t midShift = (idx == 2 ? (shifts[0] + shifts[1]) / 2 : 0);
                         for (int8_t shift = midShift - 5; shift <= midShift + 5; shift++) {
                             shifts[idx] = shift;
-                            double blur = prepareTile(tiles, row, column, true);
+                            double blur = prepareTile(tiles, baseTileWidth, baseTileHeight, row, column, true);
                             if (blur < bestResult) {
                                 bestResult = blur;
                                 bestShift = shift;
@@ -394,7 +397,7 @@ static void init() {
     sprintf(filename, "%s/assets/tiles.png", dataDirectory);
     SDL_Surface *image = IMG_Load(filename);
     if (!image) imgfatal();
-    TilesPNG = SDL_ConvertSurfaceFormat(image, SDL_PIXELFORMAT_RGBA32, 0);
+    TilesPNG = SDL_ConvertSurfaceFormat(image, SDL_PIXELFORMAT_ABGR8888, 0);
     SDL_FreeSurface(image);
 
     // measure padding
@@ -420,7 +423,7 @@ static void init() {
 }
 
 
-static void loadTiles(SDL_Renderer *renderer, int outputWidth, int outputHeight) {
+static void loadTiles(int outputWidth, int outputHeight) {
     if (TilesPNG == NULL) init();
 
     // The original image will be resized to 4 possible sizes:
@@ -430,50 +433,40 @@ static void loadTiles(SDL_Renderer *renderer, int outputWidth, int outputHeight)
     //  -  Textures[3]: tiles are (N+1) x (M+1) pixels
     // They will be NULL when either dimension is equal to 0.
 
-    static SDL_Renderer *currentRenderer;
-    if (currentRenderer == renderer
-        && baseTileWidth == outputWidth / COLS
-        && baseTileHeight == outputHeight / ROWS) {
-        return;
-    }
-
-    currentRenderer = renderer;
     baseTileWidth = outputWidth / COLS;
     baseTileHeight = outputHeight / ROWS;
 
+    // create new textures
+    glDeleteTextures(4, Textures);
+    glGenTextures(4, Textures);
+
     for (int i = 0; i < 4; i++) {
 
-        // destroy old textures
-        if (Textures[i]) SDL_DestroyTexture(Textures[i]);
-        Textures[i] = NULL;
-
         // choose dimensions
-        int textureWidth = (baseTileWidth + (i == 1 || i == 3 ? 1 : 0)) * TILE_COLS;
-        int textureHeight = (baseTileHeight + (i == 2 || i == 3 ? 1 : 0)) * TILE_ROWS;
-        if (textureWidth == 0 || textureHeight == 0) continue;
+        int tileWidth = baseTileWidth + (i == 1 || i == 3 ? 1 : 0);
+        int tileHeight = baseTileHeight + (i == 2 || i == 3 ? 1 : 0);
+        if (tileWidth == 0 || tileHeight == 0) continue;
+        int surfaceWidth = 1, surfaceHeight = 1;
+        while (surfaceWidth < tileWidth * TILE_COLS) surfaceWidth *= 2;
+        while (surfaceHeight < tileHeight * TILE_ROWS) surfaceHeight *= 2;
 
         // downscale the tiles
-        SDL_Surface *tiles = SDL_CreateRGBSurfaceWithFormat(0, textureWidth, textureHeight, 32, SDL_PIXELFORMAT_RGBA32);
+        SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, surfaceWidth, surfaceHeight, 32, SDL_PIXELFORMAT_ABGR8888);
         for (int row = 0; row < TILE_ROWS; row++) {
             for (int column = 0; column < TILE_COLS; column++) {
-                prepareTile(tiles, row, column, false);
+                prepareTile(surface, tileWidth, tileHeight, row, column, false);
             }
         }
 
-        // convert to renderer's preferred format then to texture
-        SDL_RendererInfo info;
-        SDL_GetRendererInfo(renderer, &info);
-        SDL_Surface *converted = SDL_ConvertSurfaceFormat(tiles, info.texture_formats[0], 0);
-        Textures[i] = SDL_CreateTextureFromSurface(renderer, converted);
-        SDL_SetTextureBlendMode(Textures[i], SDL_BLENDMODE_BLEND);
-        SDL_FreeSurface(converted);
-        SDL_FreeSurface(tiles);
+        // convert to texture
+        glBindTexture(GL_TEXTURE_2D, Textures[i]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, surfaceWidth, surfaceHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, surface->pixels);
+        SDL_FreeSurface(surface);
+        TextureWidth[i] = surfaceWidth;
+        TextureHeight[i] = surfaceHeight;
     }
-}
-
-
-SDL_Texture *getTexture(int tileWidth, int tileHeight) {
-    return Textures[(tileWidth > baseTileWidth ? 1 : 0) + (tileHeight > baseTileHeight ? 2 : 0)];
 }
 
 
@@ -494,65 +487,63 @@ void updateTile(int row, int column, short charIndex,
 
 
 void updateScreen() {
-    if (!Win) return;
+    if (!Win || outputWidth <= 0 || outputHeight <= 0) return;
 
-    SDL_Renderer *renderer = SDL_GetRenderer(Win);
-    if (!renderer) {
-        renderer = SDL_CreateRenderer(Win, -1, 0);
-        if (!renderer) sdlfatal();
-    }
-
-    int outputWidth = 0;
-    int outputHeight = 0;
-    SDL_GetRendererOutputSize(renderer, &outputWidth, &outputHeight);
-    loadTiles(renderer, outputWidth, outputHeight);
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-    SDL_RenderClear(renderer);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
 
     for (int y = 0; y < ROWS; y++) {
         for (int x = 0; x < COLS; x++) {
-            SDL_Texture *texture;
-            SDL_Rect src, dest;
             ScreenTile *tile = &screenTiles[y][x];
+
             int tileRow = tile->charIndex / 16;
             int tileColumn = tile->charIndex % 16;
+            int tileWidth = ((x+1) * outputWidth / COLS) - (x * outputWidth / COLS);
+            int tileHeight = ((y+1) * outputHeight / ROWS) - (y * outputHeight / ROWS);
+            int textureIndex = (tileWidth > baseTileWidth ? 1 : 0) + (tileHeight > baseTileHeight ? 2 : 0);
+            if (tileWidth == 0 || tileHeight == 0) continue;
 
-            dest.x = x * outputWidth / COLS;
-            dest.y = y * outputHeight / ROWS;
-            dest.w = (x+1) * outputWidth / COLS - dest.x;
-            dest.h = (y+1) * outputHeight / ROWS - dest.y;
+            // source rectangle
+            double u0 = tileColumn * tileWidth * 1. / TextureWidth[textureIndex];
+            double v0 = tileRow * tileHeight * 1. / TextureHeight[textureIndex];
+            double u1 = (tileColumn + 1) * tileWidth * 1. / TextureWidth[textureIndex];
+            double v1 = (tileRow + 1) * tileHeight * 1. / TextureHeight[textureIndex];
 
-            texture = getTexture(dest.w, dest.h);
-            if (!texture) continue;
+            // target rectangle
+            double x0 = (x * outputWidth / COLS) * 2. / outputWidth - 1.;
+            double y0 = (y * outputHeight / ROWS) * -2. / outputHeight + 1.;
+            double x1 = ((x+1) * outputWidth / COLS) * 2. / outputWidth - 1.;
+            double y1 = ((y+1) * outputHeight / ROWS) * -2. / outputHeight + 1.;
 
-            src.x = tileColumn * dest.w;
-            src.y = tileRow * dest.h;
-            src.w = dest.w;
-            src.h = dest.h;
-
+            // paint the background
             if (tile->backRed || tile->backGreen || tile->backBlue) {
-                SDL_SetRenderDrawColor(renderer,
-                    tile->backRed * 255 / 100,
-                    tile->backGreen * 255 / 100,
-                    tile->backBlue * 255 / 100, 255);
-                SDL_RenderFillRect(renderer, &dest);
+                glColor3f(tile->backRed * 0.01, tile->backGreen * 0.01, tile->backBlue * 0.01);
+                glRectd(x0, y0, x1, y1);
             }
 
+            // blend the foreground
             if (!tileEmpty[tileRow][tileColumn]
-                    || tileRow == 21 && tileColumn == 1  // wall top (procedural)
-                    || tileRow == 20 && tileColumn == 2) // floor (possibly procedural)
+                || tileRow == 21 && tileColumn == 1  // wall top (procedural)
+                || tileRow == 20 && tileColumn == 2) // floor (possibly procedural)
             {
-                SDL_SetTextureColorMod(texture,
-                    tile->foreRed * 255 / 100,
-                    tile->foreGreen * 255 / 100,
-                    tile->foreBlue * 255 / 100);
-                SDL_RenderCopy(renderer, texture, &src, &dest);
+                glEnable(GL_TEXTURE_2D);
+                glBindTexture(GL_TEXTURE_2D, Textures[textureIndex]);
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glColor3f(tile->foreRed * 0.01, tile->foreGreen * 0.01, tile->foreBlue * 0.01);
+                glBegin(GL_QUADS);
+                glTexCoord2d(u0, v0); glVertex2d(x0, y0);
+                glTexCoord2d(u0, v1); glVertex2d(x0, y1);
+                glTexCoord2d(u1, v1); glVertex2d(x1, y1);
+                glTexCoord2d(u1, v0); glVertex2d(x1, y0);
+                glEnd();
+                glDisable(GL_BLEND);
+                glDisable(GL_TEXTURE_2D);
             }
         }
     }
 
-    SDL_RenderPresent(renderer);
+    SDL_GL_SwapWindow(Win);
 }
 
 
@@ -574,19 +565,25 @@ void resizeWindow(int width, int height) {
         fullScreen = true;
     }
 
-    // create the window
     if (Win == NULL) {
+        // create the window
         Win = SDL_CreateWindow("Brogue",
             SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height,
-            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (fullScreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
+            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_OPENGL
+                | (fullScreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
         if (Win == NULL) sdlfatal();
 
+        // set its icon
         char filename[BROGUE_FILENAME_MAX];
         sprintf(filename, "%s/assets/icon.png", dataDirectory);
         SDL_Surface *icon = IMG_Load(filename);
         if (icon == NULL) imgfatal();
         SDL_SetWindowIcon(Win, icon);
         SDL_FreeSurface(icon);
+
+        // create an OpenGL context
+        glContext = SDL_GL_CreateContext(Win);
+        SDL_GL_SetSwapInterval(0); // (we don't need v-sync)
     }
 
     if (fullScreen) {
@@ -609,7 +606,33 @@ void resizeWindow(int width, int height) {
         }
     }
 
+    // get the final window size (in screen units)
     SDL_GetWindowSize(Win, &windowWidth, &windowHeight);
-    refreshScreen();
+
+    // get the output size (in pixels)
+    SDL_GL_GetDrawableSize(Win, &outputWidth, &outputHeight);
+
+    // update the viewport and textures
+    glViewport(0, 0, outputWidth, outputHeight);
+    loadTiles(outputWidth, outputHeight);
     updateScreen();
+}
+
+
+SDL_Surface *captureScreen() {
+    if (!Win) return NULL;
+    SDL_Surface *screenshot = SDL_CreateRGBSurfaceWithFormat(0, outputWidth, outputHeight, 32, SDL_PIXELFORMAT_ABGR8888);
+    glReadPixels(0, 0, outputWidth, outputHeight, GL_RGBA, GL_UNSIGNED_BYTE, screenshot->pixels);
+
+    // OpenGL has (0,0) in the lower-left corner, SDL in the upper-left. We need to swap rows of pixels vertically.
+    size_t len = outputWidth * 4;
+    unsigned char *pixels = screenshot->pixels, *row = malloc(len);
+    for (int y = 0; y < outputHeight/2; y++) {
+        memcpy(row, pixels + y * len, len);
+        memcpy(pixels + y * len, pixels + (outputHeight - y - 1) * len, len);
+        memcpy(pixels + (outputHeight - y - 1) * len, row, len);
+    }
+    free(row);
+
+    return screenshot;
 }

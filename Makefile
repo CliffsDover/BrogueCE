@@ -3,7 +3,7 @@ include config.mk
 cflags := -Isrc/brogue -Isrc/platform -std=c99 \
 	-Wall -Wpedantic -Werror=implicit -Wno-parentheses -Wno-unused-result -Wno-format
 libs := -lm
-cppflags := -DDATADIR=$(DATADIR)
+cppflags := -DBROGUEDATADIR=$(DATADIR)
 
 sources := $(wildcard src/brogue/*.c) $(addprefix src/platform/,main.c platformdependent.c)
 
@@ -18,6 +18,16 @@ ifeq ($(GRAPHICS),YES)
 	cflags += $(shell $(SDL_CONFIG) --cflags)
 	cppflags += -DBROGUE_SDL
 	libs += $(shell $(SDL_CONFIG) --libs) -lSDL2_image
+	ifeq ($(OS),Windows_NT)
+		libs += -lopengl32
+	else
+		OSNAME := $(shell uname -s)
+		ifeq ($(OSNAME),Darwin)
+			libs += -framework OpenGL
+		else
+			libs += -lGL
+		endif
+	endif
 endif
 
 ifeq ($(WEBBROGUE),YES)

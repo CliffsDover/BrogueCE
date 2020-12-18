@@ -2,7 +2,9 @@
 #include <unistd.h>
 #endif
 
+#include <SDL_image.h>
 #include <limits.h>
+#include "platform.h"
 #include "tiles.h"
 
 #define PAUSE_BETWEEN_EVENT_POLLING     36L//17
@@ -395,19 +397,8 @@ static void _remap(const char *from, const char *to) {
  * Take screenshot in current working directory (ScreenshotN.png)
  */
 static boolean _takeScreenshot() {
-    // get the renderer
-    if (!Win) return false;
-    SDL_Renderer *renderer = SDL_GetRenderer(Win);
-    if (!renderer) return false;
-
-    // get its size
-    int outputWidth = 0;
-    int outputHeight = 0;
-    SDL_GetRendererOutputSize(renderer, &outputWidth, &outputHeight);
-
-    // take a screenshot
-    SDL_Surface *screenshot = SDL_CreateRGBSurfaceWithFormat(0, outputWidth, outputHeight, 32, SDL_PIXELFORMAT_RGBA32);
-    SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_RGBA32, screenshot->pixels, outputWidth * 4);
+    SDL_Surface *screenshot = captureScreen();
+    if (!screenshot) return false;
 
     // choose filename
     char screenshotFilepath[BROGUE_FILENAME_MAX];
