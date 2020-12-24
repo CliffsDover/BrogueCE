@@ -95,6 +95,7 @@ extern struct brogueConsole sdlConsole;
 extern int windowWidth;
 extern int windowHeight;
 extern boolean fullScreen;
+extern boolean softwareRendering;
 #endif
 
 #ifdef BROGUE_CURSES

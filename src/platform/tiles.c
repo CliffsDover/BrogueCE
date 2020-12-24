@@ -13,15 +13,15 @@
 #define TILE_COLS      16   // number of columns in the source PNG
 #define TEXT_X_HEIGHT 100   // height (px) of the 'x' outline
 #define TEXT_BASELINE  46   // height (px) of the blank space below the 'x' outline
-#define MAX_TILE_SIZE  64   // maximum width or height (px) of screen tiles
+#define MAX_TILE_SIZE  64   // maximum width or height (px) of screen tiles before we switch to linear interpolation
 
 // How each tile should be processed:
 //  -  's' = stretch: tile stretches to fill the space
 //  -  'f' = fit: preserve aspect ratio (but tile can stretch up to 20%)
 //  -  't' = text: characters must line up vertically (max. stretch 40%)
-//  -  '#' = same as 't' but allow vertical sub-pixel alignment
+//  -  '#' = symbols: other Unicode characters (max. stretch 40%)
 static const char TileProcessing[TILE_ROWS][TILE_COLS+1] = {
-    "ffffffffffffffff", "ffffffffffffffff", "#t##########t#t#", "tttttttttttt###t",
+    "ffffffffffffffff", "ssssssssssssssss", "#t##########t#t#", "tttttttttttt###t",
     "#ttttttttttttttt", "ttttttttttt#####", "#ttttttttttttttt", "ttttttttttt#####",
     "################", "################", "################", "################",
     "tttttttttttttttt", "ttttttt#tttttttt", "tttttttttttttttt", "ttttttt#tttttttt",
@@ -30,7 +30,7 @@ static const char TileProcessing[TILE_ROWS][TILE_COLS+1] = {
 };
 
 typedef struct ScreenTile {
-    short charIndex;
+    short needsRefresh, charIndex;
     short foreRed, foreGreen, foreBlue;
     short backRed, backGreen, backBlue;
 } ScreenTile;
@@ -49,6 +49,7 @@ SDL_Window *Win = NULL;
 int windowWidth = -1;
 int windowHeight = -1;
 boolean fullScreen = false;
+boolean softwareRendering = false;
 
 
 static void sdlfatal(char *file, int line) {
@@ -159,8 +160,8 @@ static double prepareTile(SDL_Surface *surface, int tileWidth, int tileHeight, i
     // ... horizontally:
 
     stop0 = 0;
-    stop1 = TILE_WIDTH / 5; // 20%
-    stop2 = TILE_WIDTH / 2; // 50%
+    stop1 = TILE_WIDTH / 5;   // 20%
+    stop2 = TILE_WIDTH / 2;   // 50%
     stop3 = TILE_WIDTH * 4/5; // 80%
     stop4 = TILE_WIDTH;
 
@@ -187,9 +188,9 @@ static double prepareTile(SDL_Surface *surface, int tileWidth, int tileHeight, i
     } else {
         stop0 = padding;
         stop4 = TILE_HEIGHT - padding;
-        stop1 = stop0 + (stop4 - stop0) / 5;    // 20%
-        stop2 = stop0 + (stop4 - stop0) / 2;    // 50%
-        stop3 = stop0 + (stop4 - stop0) * 4/5;  // 80%
+        stop1 = stop0 + (stop4 - stop0) / 5;   // 20%
+        stop2 = stop0 + (stop4 - stop0) / 2;   // 50%
+        stop3 = stop0 + (stop4 - stop0) * 4/5; // 80%
     }
 
     map0 = (fitHeight - glyphHeight) / 2;
@@ -238,7 +239,7 @@ static double prepareTile(SDL_Surface *surface, int tileWidth, int tileHeight, i
     }
     downscaled:
 
-    // add floor dust (if the floor tile is blank)
+    // procedural floor (if the floor tile is blank)
     if (row == 20 && column == 2 && tileEmpty[row][column] && tileWidth > 2 && tileHeight > 2 && !optimizing) {
         int w = tileWidth - 2;
         int h = tileHeight - 2;
@@ -276,7 +277,7 @@ static double prepareTile(SDL_Surface *surface, int tileWidth, int tileHeight, i
         free(idx);
     }
 
-    // add wall tops: diagonal sine waves
+    // procedural wall tops: diagonal sine waves
     if ((row == 16 && column == 2 || row == 21 && column == 1 || row == 22 && column == 4) && !optimizing) {
         for (int y = 0; y < tileHeight; y++) {
             if (row != 21 && (y > tileHeight / 2 || (values[y * tileWidth] & 0xffffffffU))) break;
@@ -437,19 +438,13 @@ static void loadTiles(SDL_Renderer *renderer, int outputWidth, int outputHeight)
     if (TilesPNG == NULL) init();
 
     // choose tile size
-    int newBaseTileWidth = outputWidth / COLS;
-    int newBaseTileHeight = outputHeight / ROWS;
     double tileAspectRatio = (double)(outputWidth * ROWS) / (outputHeight * COLS);
-    if (newBaseTileHeight >= MAX_TILE_SIZE) {
-        newBaseTileHeight = TILE_HEIGHT;
-        newBaseTileWidth = round(newBaseTileHeight * tileAspectRatio);
+    int newBaseTileWidth = max(1, outputWidth / COLS);
+    int newBaseTileHeight = max(1, outputHeight / ROWS);
+    if (newBaseTileWidth >= MAX_TILE_SIZE || newBaseTileHeight >= MAX_TILE_SIZE) {
+        newBaseTileWidth = max(1, min(TILE_WIDTH, round(TILE_HEIGHT * tileAspectRatio)));
+        newBaseTileHeight = max(1, min(TILE_HEIGHT, round(TILE_WIDTH / tileAspectRatio)));
     }
-    if (newBaseTileWidth >= MAX_TILE_SIZE) {
-        newBaseTileWidth = TILE_WIDTH;
-        newBaseTileHeight = round(newBaseTileWidth / tileAspectRatio);
-    }
-    if (newBaseTileWidth == 0) newBaseTileWidth = 1;
-    if (newBaseTileHeight == 0) newBaseTileHeight = 1;
 
     // if tile size has not changed, we don't need to rebuild the tiles
     if (baseTileWidth == newBaseTileWidth && baseTileHeight == newBaseTileHeight) {
@@ -475,10 +470,10 @@ static void loadTiles(SDL_Renderer *renderer, int outputWidth, int outputHeight)
     }
 
     // The original image will be resized to 4 possible sizes:
-    //  -  Textures[0]: tiles are  N    x  M    pixels
-    //  -  Textures[1]: tiles are (N+1) x  M    pixels
-    //  -  Textures[2]: tiles are  N    x (M+1) pixels
-    //  -  Textures[3]: tiles are (N+1) x (M+1) pixels
+    //  -  Textures[0]: tiles are   W   x   H   pixels
+    //  -  Textures[1]: tiles are (W+1) x   H   pixels
+    //  -  Textures[2]: tiles are   W   x (H+1) pixels
+    //  -  Textures[3]: tiles are (W+1) x (H+1) pixels
 
     for (int i = 0; i < numTextures; i++) {
 
@@ -512,13 +507,14 @@ void updateTile(int row, int column, short charIndex,
     short backRed, short backGreen, short backBlue)
 {
     screenTiles[row][column] = (ScreenTile){
+        .needsRefresh = 1,
         .charIndex = charIndex,
-        .foreRed = foreRed,
+        .foreRed   = foreRed,
         .foreGreen = foreGreen,
-        .foreBlue = foreBlue,
-        .backRed = backRed,
+        .foreBlue  = foreBlue,
+        .backRed   = backRed,
         .backGreen = backGreen,
-        .backBlue = backBlue
+        .backBlue  = backBlue
     };
 }
 
@@ -528,8 +524,15 @@ void updateScreen() {
 
     SDL_Renderer *renderer = SDL_GetRenderer(Win);
     if (!renderer) {
-        renderer = SDL_CreateRenderer(Win, -1, 0);
+        renderer = SDL_CreateRenderer(Win, -1, (softwareRendering ? SDL_RENDERER_SOFTWARE : 0));
         if (!renderer) sdlfatal(__FILE__, __LINE__);
+
+        if (SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE) < 0) sdlfatal(__FILE__, __LINE__);
+
+        // see if we ended up using the software renderer or not
+        SDL_RendererInfo info;
+        if (SDL_GetRendererInfo(renderer, &info) < 0) sdlfatal(__FILE__, __LINE__);
+        softwareRendering = (strcmp(info.name, "software") == 0);
     }
 
     int outputWidth, outputHeight;
@@ -538,68 +541,98 @@ void updateScreen() {
 
     loadTiles(renderer, outputWidth, outputHeight);
 
-    if (SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE) < 0) sdlfatal(__FILE__, __LINE__);
-    if (SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0) < 0) sdlfatal(__FILE__, __LINE__);
-    if (SDL_RenderClear(renderer) < 0) sdlfatal(__FILE__, __LINE__);
+    if (!softwareRendering) {
+        // black out the frame (double-buffering invalidated it)
+        if (SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0) < 0) sdlfatal(__FILE__, __LINE__);
+        if (SDL_RenderClear(renderer) < 0) sdlfatal(__FILE__, __LINE__);
+    }
 
-    for (int y = 0; y < ROWS; y++) {
+    // To please the OpenGL renderer, we'll proceed in 5 steps:
+    //  -1. background colors
+    //  0.  Textures[0]
+    //  1.  Textures[1]
+    //  2.  Textures[2]
+    //  3.  Textures[3]
+
+    for (int step = -1; step < numTextures; step++) {
+
         for (int x = 0; x < COLS; x++) {
-            SDL_Rect dest;
-            ScreenTile *tile = &screenTiles[y][x];
-            int tileRow = tile->charIndex / 16;
-            int tileColumn = tile->charIndex % 16;
             int tileWidth = ((x+1) * outputWidth / COLS) - (x * outputWidth / COLS);
-            int tileHeight = ((y+1) * outputHeight / ROWS) - (y * outputHeight / ROWS);
-            if (tileWidth == 0 || tileHeight == 0) continue;
+            if (tileWidth == 0) continue;
 
-            dest.x = x * outputWidth / COLS;
-            dest.y = y * outputHeight / ROWS;
-            dest.w = tileWidth;
-            dest.h = tileHeight;
+            for (int y = 0; y < ROWS; y++) {
+                int tileHeight = ((y+1) * outputHeight / ROWS) - (y * outputHeight / ROWS);
+                if (tileHeight == 0) continue;
 
-            // paint the background
-            if (tile->backRed || tile->backGreen || tile->backBlue) {
-                if (SDL_SetRenderDrawColor(renderer,
-                    round(2.55 * tile->backRed),
-                    round(2.55 * tile->backGreen),
-                    round(2.55 * tile->backBlue), 255) < 0) sdlfatal(__FILE__, __LINE__);
-                if (SDL_RenderFillRect(renderer, &dest) < 0) sdlfatal(__FILE__, __LINE__);
-            }
-
-            // blend the foreground
-            if (!tileEmpty[tileRow][tileColumn]
-                    || tileRow == 21 && tileColumn == 1  // wall top (procedural)
-                    || tileRow == 20 && tileColumn == 2) // floor (possibly procedural)
-            {
-                SDL_Rect src;
-                SDL_Texture *texture;
-
-                if (numTextures == 4) {
-                    // use the appropriate downscaled texture, which the renderer can copy 1:1
-                    texture = Textures[(tileWidth > baseTileWidth ? 1 : 0) + (tileHeight > baseTileHeight ? 2 : 0)];
-                    src.x = tileColumn * tileWidth;
-                    src.y = tileRow * tileHeight;
-                    src.w = tileWidth;
-                    src.h = tileHeight;
-                } else {
-                    // use a single texture, let the renderer do the interpolation
-                    texture = Textures[0];
-                    src.x = tileColumn * baseTileWidth;
-                    src.y = tileRow * baseTileHeight;
-                    src.w = baseTileWidth;
-                    src.h = baseTileHeight;
+                ScreenTile *tile = &screenTiles[y][x];
+                if (softwareRendering && !tile->needsRefresh) {
+                    continue; // software rendering does not use double-buffering, so the tile is still on screen
                 }
 
-                if (SDL_SetTextureColorMod(texture,
-                    round(2.55 * tile->foreRed),
-                    round(2.55 * tile->foreGreen),
-                    round(2.55 * tile->foreBlue)) < 0) sdlfatal(__FILE__, __LINE__);
-                if (SDL_RenderCopy(renderer, texture, &src, &dest) < 0) sdlfatal(__FILE__, __LINE__);
+                if (step < 0) {
+                    if (!softwareRendering && tile->backRed == 0 && tile->backGreen == 0 && tile->backBlue == 0) {
+                        continue; // SDL_RenderClear already painted everything black
+                    }
+
+                    SDL_Rect dest;
+                    dest.w = tileWidth;
+                    dest.h = tileHeight;
+                    dest.x = x * outputWidth / COLS;
+                    dest.y = y * outputHeight / ROWS;
+
+                    // paint the background
+                    if (SDL_SetRenderDrawColor(renderer,
+                        round(2.55 * tile->backRed),
+                        round(2.55 * tile->backGreen),
+                        round(2.55 * tile->backBlue), 255) < 0) sdlfatal(__FILE__, __LINE__);
+                    if (SDL_RenderFillRect(renderer, &dest) < 0) sdlfatal(__FILE__, __LINE__);
+
+                } else {
+                    int textureIndex = (numTextures < 4 ? 0 : (tileWidth > baseTileWidth ? 1 : 0) + (tileHeight > baseTileHeight ? 2 : 0));
+                    if (step != textureIndex) {
+                        continue; // this tile uses another texture and gets painted at another step
+                    }
+
+                    int tileRow    = tile->charIndex / 16;
+                    int tileColumn = tile->charIndex % 16;
+
+                    if (tileEmpty[tileRow][tileColumn]
+                            && !(tileRow == 21 && tileColumn == 1)      // wall top (procedural)
+                            && !(tileRow == 20 && tileColumn == 2)) {   // floor (possibly procedural)
+                        continue; // there is nothing to draw
+                    }
+
+                    SDL_Rect src;
+                    src.w = baseTileWidth  + (step == 1 || step == 3 ? 1 : 0);
+                    src.h = baseTileHeight + (step == 2 || step == 3 ? 1 : 0);
+                    src.x = src.w * tileColumn;
+                    src.y = src.h * tileRow;
+
+                    SDL_Rect dest;
+                    dest.w = tileWidth;
+                    dest.h = tileHeight;
+                    dest.x = x * outputWidth / COLS;
+                    dest.y = y * outputHeight / ROWS;
+
+                    // blend the foreground
+                    if (SDL_SetTextureColorMod(Textures[step],
+                        round(2.55 * tile->foreRed),
+                        round(2.55 * tile->foreGreen),
+                        round(2.55 * tile->foreBlue)) < 0) sdlfatal(__FILE__, __LINE__);
+                    if (SDL_RenderCopy(renderer, Textures[step], &src, &dest) < 0) sdlfatal(__FILE__, __LINE__);
+                }
             }
         }
     }
 
     SDL_RenderPresent(renderer);
+
+    // the screen is now up to date
+    for (int y = 0; y < ROWS; y++) {
+        for (int x = 0; x < COLS; x++) {
+            screenTiles[y][x].needsRefresh = 0;
+        }
+    }
 }
 
 
@@ -668,8 +701,7 @@ SDL_Surface *captureScreen() {
     if (!renderer) return NULL;
 
     // get its size
-    int outputWidth = 0;
-    int outputHeight = 0;
+    int outputWidth, outputHeight;
     if (SDL_GetRendererOutputSize(renderer, &outputWidth, &outputHeight) < 0) sdlfatal(__FILE__, __LINE__);
     if (outputWidth == 0 || outputHeight == 0) return NULL;
 
